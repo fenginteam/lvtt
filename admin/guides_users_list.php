@@ -1,431 +1,149 @@
-<?php 
-/*
- * 后台导游类
- * 
- */
-define('IN_ECS', true);
-require dirname(__FILE__) . '/includes/init.php';
-$exc = new exchange($ecs->table('guide_shop_information'), $db, 'guide_id', 'gudie_name');
-
-
-if ($_REQUEST['act'] == 'list') {//获取全部导游列表
-    admin_priv('users_guides');
-    $smarty->assign('ur_here', $_LANG['02_guides_users_list']);
-    $smarty->assign('action_link', array('text' => $_LANG['01_guides_user_add'], 'href' => 'guides_users_list.php?act=add_guide'));  
-    $users_list = steps_users_list();//获取导游列表
-    $smarty->assign('users_list', $users_list['users_list']);
-    $smarty->assign('filter', $users_list['filter']);
-    $smarty->assign('record_count', $users_list['record_count']);
-    $smarty->assign('page_count', $users_list['page_count']);
-    $smarty->assign('full_page', 1);
-    $smarty->assign('sort_user_id', '<img src="images/sort_desc.gif">');
-    $store_list = get_common_store_list();
-    $smarty->assign('store_list', $store_list);
-    assign_query_info();
-    $smarty->display('guides_users_list.dwt');
-}
-else if ($_REQUEST['act'] == 'query') { //aiax查询
-    $users_list = steps_users_list();
-    $smarty->assign('users_list', $users_list['users_list']);
-    $smarty->assign('filter', $users_list['filter']);
-    $smarty->assign('record_count', $users_list['record_count']);
-    $smarty->assign('page_count', $users_list['page_count']);
-    $store_list = get_common_store_list();
-    $smarty->assign('store_list', $store_list);
-    $sort_flag = sort_flag($users_list['filter']);
-    $smarty->assign($sort_flag['tag'], $sort_flag['img']);
-    make_json_result($smarty->fetch('guides_users_list.dwt'), '', array('filter' => $users_list['filter'], 'page_count' => $users_list['page_count']));
-}
-if (($_REQUEST['act'] == 'add_guide') || ($_REQUEST['act'] == 'edit_guide')) {//添加、编辑导游界面显示
-    admin_priv('users_guides');
-    $user_id = (isset($_REQUEST['id']) ? intval($_REQUEST['id']) : 0);
-   //$login_name = (isset($_REQUEST['login_name']) ? trim($_REQUEST['login_name']) : '');//导游登录名称
-    $guideInfo_list = get_steps_user_shopinfo_list(1,$user_id);//获取导游身份的入驻流程步骤信息以及导游信息
-    if(empty($guideInfo_list['guide_info']['login_name'])){
-        $login_suffix =random(4,9999);
-        $guideInfo_list['guide_info']['login_name']="lvtt_".$login_suffix;
-    }
-    $smarty->assign('guideInfo_list', $guideInfo_list);
-    $smarty->assign('action_link', array('text' => $_LANG['02_guies_users_list'], 'href' => 'guides_users_list.php?act=list'));
-    $country_list = get_regions_steps();
-    $province_list = get_regions_steps(1, 1);
-    $city_list = get_regions_steps(2, $consignee['province']);
-    $district_list = get_regions_steps(3, $consignee['city']);
-    $sql = ' SELECT region_id, region_name FROM ' . $ecs->table('region');
-    $region = $db->getAll($sql);
-
-    foreach ($region as $v) {
-        $regions[$v['region_id']] = $v['region_name'];
-    }
-
-    $smarty->assign('regions', $regions);
-    $sql = 'select steps_audit, guide_audit, guides_message, review_goods,is_show,is_IM from ' . $ecs->table('guide_shop_information') . ' where user_id = \'' . $user_id . '\'';
-    $guides = $db->getRow($sql);
-    $smarty->assign('guides', $guides);
-    $sn = 0;
-    $smarty->assign('country_list', $country_list);
-    $smarty->assign('province_list', $province_list);
-    $smarty->assign('city_list', $city_list);
-    $smarty->assign('district_list', $district_list);
-    $smarty->assign('consignee', $consignee);
-    $smarty->assign('sn', $sn);
-    $smarty->assign('user_id', $user_id);
-
-    if ($_REQUEST['act'] == 'edit_guide') { //如果是编辑导游
-        $sql = 'select user_id, user_name from '.$ecs->table('users') .'where user_id = '.$user_id;
-        $user_info=$db->getRow($sql);
-        $smarty->assign('user_info',$user_info);
-        $smarty->assign('form_action', 'update_guide');
-    }
-    else {
-        $sql = 'select user_id, user_name from' . $ecs->table('users') . ' where 1';//获取平台所有会员
-        $user_list = $db->getAll($sql);
-        $smarty->assign('user_list', $user_list);
-        $smarty->assign('form_action', 'insert_guide');
-    }
-
-    assign_query_info();
-    $smarty->display('guides_users_shopInfo.dwt');
-}
-/*处理添加和更新 */
-
-else if (($_REQUEST['act'] == 'insert_guide') || ($_REQUEST['act'] == 'update_guide')) {
-    admin_priv('users_guides');//查看是否有此权限
-    $user_id = (isset($_REQUEST['user_id']) ? intval($_REQUEST['user_id']) : 0);//获取用户id
-    $review_goods = (isset($_REQUEST['review_goods']) ? intval($_REQUEST['review_goods']) : 0);//是否审核其接团信息
-    $guide_audit = (isset($_REQUEST['guide_audit']) ? intval($_REQUEST['guide_audit']) : 0);//导游信息审核
-    $guides_message = (isset($_REQUEST['guides_message']) ? trim($_REQUEST['guides_message']) : '');//回复导游信息
-    $login_name = (isset($_REQUEST['login_name']) ? trim($_REQUEST['login_name']) : '');//登录名称
-    $password = (isset($_REQUEST['login_password']) ? trim($_REQUEST['login_password']) : '');//登录密码
-    $is_show = (isset($_REQUEST['is_show']) ? intval($_REQUEST['is_show']) : 0);//是否显示
-    $form = get_admin_steps_title_insert_form($user_id);//获取要添加或更新的字段名称（动态获取入驻步骤里的字段/导游身份）
-    $parent = get_setps_form_insert_date($form['formName']);//将获取的字段名称转换成键值对数组
-    $parent['identity']=1;
-    if($parent['contactName']){
-        $info['guide_name']=$parent['contactName'];
-    }
-    if(empty($password)){
-        $password='123456';
-    }
-    if($guide_audit ==1){
-        $info['login_name'] = $login_name;
-        $info['password'] = md5($password);
-        $is_show = 1;
-    }else if($guide_audit ==2){
-        $info['login_name'] = "";
-        $info['password'] = '';
-    }
-    $info['guide_audit'] = $guide_audit;
-    $info['review_goods'] = $review_goods;
-    $info['guides_message'] = $guides_message;
-    $info['is_show'] = $is_show;
-    if ($_REQUEST['act'] == 'update_guide') {//如果是更新就更新反之新增
-        
-        $GLOBALS['db']->autoExecute($GLOBALS['ecs']->table('merchants_steps_fields'), $parent, 'UPDATE', 'user_id = \'' . $user_id . '\' AND identity = 1');
-        $GLOBALS['db']->autoExecute($GLOBALS['ecs']->table('guide_shop_information'), $info, 'UPDATE', 'user_id = \'' . $user_id . '\'');
-    }else{
-        $parent['user_id'] = $user_id;
-        $parent['agreement'] = 1;
-        
-        $sql = 'select fid from ' . $ecs->table('merchants_steps_fields') . ' where user_id = \'' . $user_id . '\' AND identity = 1';
-        $fid = $db->getOne($sql);
-        if (0 < $fid) {//如果有值说明此会员已经入驻了,提示错误
-            $link[] = array('text' => $_LANG['go_back'], 'href' => 'guides_users_list.php?act=add_guide');
-            $centent = $_LANG['insert_fail'];
-            sys_msg($centent, 0, $link);
-            exit();
-        }
-        else {
-            $GLOBALS['db']->autoExecute($GLOBALS['ecs']->table('merchants_steps_fields'), $parent, 'INSERT');
-        }
-        $guide_info=get_guide_septs_custom_userInfo('guide_shop_information',$user_id);//获取导游信息
-        if($guide_info){//如果有值说明此会员已经入驻了,提示错误
-            $link[] = array('text' => $_LANG['go_back'], 'href' => 'guides_users_list.php?act=add_guide');
-            sys_msg($_LANG['insert_fail'], 0, $link);
-            exit();
-        }
-        
-        $info['steps_audit'] = 1;
-        $info['user_id'] =$user_id;
-        
-        $GLOBALS['db']->autoExecute($GLOBALS['ecs']->table('guide_shop_information'), $info, 'INSERT');
-    }
-    if($info['guide_audit'] == 1 && !empty($parent['contactEmail'])){//审核通过后发送导游登录账号密码到其邮箱
-        $template = get_mail_template('send_guide_password');//获取邮件模板
-        $email= $parent['contactEmail'];
-        $smarty->assign('send_date', date('Y-m-d'));
-        $smarty->assign("send_loginname", $info['login_name']);
-        $smarty->assign("send_password", $password);
-        $content = $smarty->fetch('str:' . $template['template_content']);
-        send_mail($user_name, $email, $template['template_subject'], $content, $template['is_html']);
-    }
-
-    if ($_REQUEST['act'] == 'update_guide') {
-        $centent = $_LANG['update_success'];
-    }
-    else {
-        $centent = $_LANG['insert_success'];
-    }
-    $href = 'guides_users_list.php?act=list';
-    $link[] = array('text' => $_LANG['go_back'], 'href' => $href);
-    sys_msg($centent, 0, $link);
-    
-}
-/*删除入驻导游*/
-else if ($_REQUEST['act'] == 'remove') {
-    admin_priv('users_guides');//查看是否有此权限
-    $id = (isset($_REQUEST['id']) ? intval($_REQUEST['id']) : 0);
-    $form = get_admin_steps_title_insert_form($id);//获取要添加或更新的字段名称（动态获取入驻步骤里的字段/导游身份）
-    $parent=explode(",",$form['formName']);
-    $query=array();
-    foreach($parent as $key=> $value){
-        if(substr($value, -3) == 'Img'){
-            $query[$key]=$value;
-        }
-    }
-    if(is_array($query)){
-        $query=implode(",", $query);
-    }
-    $sql = "select ".$query." from " . $ecs->table('merchants_steps_fields') . ' where user_id = \'' . $id . '\' AND identity = 1';
-    $guide_img = $db->getRow($sql);
-    foreach ($guide_img as $val){
-        if($val){
-            @unlink('../' . $val);
-        }
-    }
-    $sql = 'delete from ' . $ecs->table('guide_shop_information') . ' where user_id = \'' . $id . '\'';
-    $db->query($sql);
-    $sql = 'delete from ' . $ecs->table('merchants_steps_fields') . ' where user_id = \'' . $id . '\' AND identity = 1';
-    $db->query($sql);
-    if ($GLOBALS['_CFG']['delete_seller'] && $id) {//删除导游时是否删除导游的所有信息
-        
-    }
-    $link[] = array('text' => $_LANG['go_back'], 'href' => 'guides_users_list.php?act=list');
-    sys_msg('删除成功', 0, $link);
-}
-else if ($_REQUEST['act'] == 'toggle_is_show') {//编辑是否显示
-    check_authz_json('goods_manage');
-    $guide_id = intval($_POST['id']);
-    $is_show = intval($_POST['val']);
-
-    if ($exc->edit('is_show = \'' . $is_show . '\'', $guide_id)) {
-        clear_cache_files();
-        make_json_result($is_show);
-    }
-}
-else if ($_REQUEST['act'] == 'toggle_is_IM') {//是否IM在线客服
-    check_authz_json('goods_manage');
-    $guide_id = intval($_POST['id']);
-    $is_IM = intval($_POST['val']);
-
-    if ($exc->edit('is_IM = \'' . $is_IM . '\'', $guide_id)) {
-        clear_cache_files();
-        make_json_result($is_IM);
-    }
-}
-else if ($_REQUEST['act'] == 'edit_sort_order') {//编辑排序
-    check_authz_json('users_guides');
-    $guide_id = intval($_POST['id']);
-    $sort_order = intval($_POST['val']);
-
-    if ($exc->edit('sort_order = \'' . $sort_order . '\'', $guide_id)) {
-        clear_cache_files();
-        make_json_result($sort_order);
-    }
-}
-/*
- * 获取入驻导游列表
- * 
- * @param
- * @return $arr
- */
-function steps_users_list()
-{
-    $result = get_filter();
-
-    if ($result === false) {
-        $filter['keywords'] = !isset($_REQUEST['keywords']) ? '' : trim($_REQUEST['keywords']);
-        if (isset($_REQUEST['is_ajax']) && ($_REQUEST['is_ajax'] == 1)) {
-            $filter['keywords'] = json_str_iconv($filter['keywords']);
-        }
-       
-        $filter['sort_by'] = empty($_REQUEST['sort_by']) ? 'mis.guide_id' : trim($_REQUEST['sort_by']);
-        $filter['sort_order'] = empty($_REQUEST['sort_order']) ? 'DESC' : trim($_REQUEST['sort_order']);
-        $filter['user_name'] = empty($_REQUEST['user_name']) ? '' : trim($_REQUEST['user_name']);
-        $ex_where = ' WHERE 1 ';
-        $filter['store_search'] = empty($_REQUEST['store_search']) ? 0 : intval($_REQUEST['store_search']);
-        $filter['merchant_id'] = isset($_REQUEST['merchant_id']) ? intval($_REQUEST['merchant_id']) : 0;
-        $filter['store_keyword'] = isset($_REQUEST['guide_name']) ? trim($_REQUEST['guide_name']) : '';
-        $store_where = '';
-        $store_search_where = '';
-        
-        if ($filter['store_search'] != 0) {
-                
-
-                if ($filter['store_search'] == 1) {
-                    $ex_where .= ' AND mis.user_id = \'' . $filter['merchant_id'] . '\' ';
-                }
-                else if ($filter['store_search'] == 2) {
-                    $store_where .= ' AND mis.guide_name LIKE \'%' . mysql_like_quote($filter['store_keyword']) . '%\'';
-                }
-                
-
-                if (1 < $filter['store_search']) {
-                    $ex_where .= ' AND mis.user_id > 0 ' . $store_where . ' ';
-                }
-           
-        }
-
-        $ex_where .= (!empty($filter['user_name']) ? ' AND (u.user_name LIKE \'%' . mysql_like_quote($filter['user_name']) . '%\')' : '');
-        $filter['record_count'] = $GLOBALS['db']->getOne('SELECT COUNT(*) FROM ' . $GLOBALS['ecs']->table('guide_shop_information') . ' as mis ' . ' LEFT JOIN ' . $GLOBALS['ecs']->table('users') . ' as u on mis.user_id = u.user_id ' . $ex_where);
-        $filter = page_and_size($filter);
-        $sql = 'SELECT mis.* ' . ' FROM ' . $GLOBALS['ecs']->table('guide_shop_information') . ' AS mis ' . ' LEFT JOIN ' . $GLOBALS['ecs']->table('users') . ' as u on mis.user_id = u.user_id ' . $ex_where . ' ORDER BY ' . $filter['sort_by'] . ' ' . $filter['sort_order'] . ' LIMIT ' . $filter['start'] . ',' . $filter['page_size'];
-        $filter['keywords'] = stripslashes($filter['keywords']);
-        set_filter($filter, $sql);
-       
-    }
-    else {
-        $sql = $result['sql'];
-        
-        $filter = $result['filter'];
-    }
-    
-    $users_list = $GLOBALS['db']->getAll($sql);
-    $count = count($users_list);
-    for ($i = 0; $i < $count; $i++) {
-        $users_list[$i]['guide_id'] = $users_list[$i]['guide_id'];
-        $users_list[$i]['user_name'] = $GLOBALS['db']->getOne('select user_name from ' . $GLOBALS['ecs']->table('users') . ' where user_id = \'' . $users_list[$i]['user_id'] . '\'');
-
-    }
-    
-    $arr = array('users_list' => $users_list, 'filter' => $filter, 'page_count' => $filter['page_count'], 'record_count' => $filter['record_count']);
-    return $arr;
-}
-/*
- * 获取导游、供应商对应的入驻申请流程步骤
- * 
- * @param $identity         所属身份0 供应商 1导游
- *        $user_id          用户id
- *        
- *        
- * @return $arr       
- */
- 
-function get_steps_user_shopInfo_list($identity=0,$user_id = 0, $ec_shop_bid = 0)
-{
-    $sql = 'select * from ' . $GLOBALS['ecs']->table('merchants_steps_process') . ' where 1 and process_steps <> 1 AND is_show = 1 AND identity = '. $identity.' AND id <> 10 order by process_steps asc';
-    $res = $GLOBALS['db']->getAll($sql);
-    $arr = array();
-
-    foreach ($res as $key => $row) {
-        $arr[$key]['sp_id'] = $row['id'];
-        $arr[$key]['process_title'] = $row['process_title'];
-        $arr[$key]['steps_title'] = get_user_steps_title($row['id'], $user_id);
-        
-    }
-    $guide_info = get_guide_septs_custom_userinfo('guide_shop_information', $user_id);//获取导游信息
-    $arr['guide_info']=$guide_info;
-    return $arr;
-}
-/*
- * 获取对应流程步骤的详细流程标题描述信息
- * 
- * @param   $id             所属流程id
- *          $user_id        用户id
- *          
- *          
- * @return $arr
- */
-function get_user_steps_title($id = 0, $user_id)
-{
-    include_once ROOT_PATH . '/includes/cls_image.php';
-    $image = new cls_image($_CFG['bgcolor']);
-    $sql = 'select tid, fields_titles, steps_style, titles_annotation from ' . $GLOBALS['ecs']->table('merchants_steps_title') . ' where fields_steps = \'' . $id . '\'';
-    $res = $GLOBALS['db']->getAll($sql);
-    $arr = array();
-
-    foreach ($res as $key => $row) {
-        $arr[$key]['tid'] = $row['tid'];
-        $arr[$key]['fields_titles'] = $row['fields_titles'];
-        $arr[$key]['steps_style'] = $row['steps_style'];
-        $arr[$key]['titles_annotation'] = $row['titles_annotation'];
-        $sql = 'select * from ' . $GLOBALS['ecs']->table('merchants_steps_fields_centent') . ' where tid = \'' . $row['tid'] . '\'';
-        $centent = $GLOBALS['db']->getRow($sql);
-        $cententFields = get_fields_centent_info(1,$centent['id'], $centent['textFields'], $centent['fieldsDateType'], $centent['fieldsLength'], $centent['fieldsNotnull'], $centent['fieldsFormName'], $centent['fieldsCoding'], $centent['fieldsForm'], $centent['fields_sort'], $centent['will_choose'], 'root', $user_id);
-        $arr[$key]['cententFields'] = get_array_sort($cententFields, 'fields_sort');  
-        
-    }
-
-    return $arr;
-}
-/*
- * 获取指定内容的所有信息
- * 
- * @param  $table       数据库表名
- *         $user_id     用户id
- *         
- * @return $result
- */
-function get_guide_septs_custom_userInfo($table = '', $user_id = 0)
-{
-    
-    $sql = 'select * from ' . $GLOBALS['ecs']->table($table) . ' where user_id = \'' . $user_id . '\'' ;
-    return $GLOBALS['db']->getRow($sql);
-}
-
-/*
- * 获取指定导游身份所有入驻流程中的字段
- *
- * @param  $user_id     用户id
- *
- * @return $after_arr
- */
-function get_admin_steps_title_insert_form($user_id)
-{
-    $sql = 'select * from ' . $GLOBALS['ecs']->table('merchants_steps_process') . ' where 1 and process_steps <> 1 AND is_show = 1 AND identity = 1 AND id <> 10 order by process_steps asc';
-    $res = $GLOBALS['db']->getAll($sql);
-    $arr = array();
-    
-    foreach ($res as $key => $row) {
-        $arr[$key]['sp_id'] = $row['id'];
-        $arr[$key]['process_title'] = $row['process_title'];
-        $arr[$key]['steps_title'] = get_user_steps_title($row['id'], $user_id);
-        if(is_array($arr[$key]['steps_title'][0]['cententFields'])){
-            $cententFields = $arr[$key]['steps_title'][0]['cententFields'];
-            for ($j = 1; $j <= count($cententFields); $j++) {
-                    $after_arr['formName'] .= $cententFields[$j]['textFields'] . ',';
-                }
-        }
-        
-    }
-    $after_arr['formName'] = substr($after_arr['formName'], 0, -1);
-    return $after_arr;
-}
-/*
- * 获取随机数
- *
- * @param  $length     长度
- *         $mumeric    传入数值  不为0则 生产带字符串的随机码
- *
- * @return $hash
- */
-function random($length = 6, $numeric = 0)
-{
-    (PHP_VERSION < '4.2.0') && mt_srand((double) microtime() * 1000000);
-
-    if ($numeric) {
-        $hash = sprintf('%0' . $length . 'd', mt_rand(0, pow(10, $length) - 1));
-    }
-    else {
-        $hash = '';
-        $chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789abcdefghjkmnpqrstuvwxyz';
-        $max = strlen($chars) - 1;
-
-        for ($i = 0; $i < $length; $i++) {
-            $hash .= $chars[mt_rand(0, $max)];
-        }
-    }
-
-    return $hash;
-}
+<?php @Zend;
+3074;
+/* �!This is not a text file!��  */
+print <<<EOM
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.0 Transitional//EN"><HTML><HEAD></HEAD><BODY LANG="en-US" DIR="LTR"><H2 ALIGN=CENTER>Zend Guard Run-time support missing!</H2><P>One more more files on this web site were encoded by <A HREF="http://www.zend.com/products/guard">ZendGuard</A> and the required run-time support is not installed orproperly configured.</P><H3>For the Web site user</H3><P>This means that this Web server is not configured correctly to runthe files that it contains. Please contact the Web site'sadministrator/webmaster and inform them of this problem and give themthe URL you are trying to display to help them in diagnosing theproblem.</P><H3>For The Site Administrator/Web Master</H3><P>One or more files on your site were encoded with Zend Guard. Thismay be third party libraries that were provided to you by an ISV. Toallow these files to properly run you need to download and installone of the Zend guard run-time libraries. This is either ZendOptimizer or Zend Loader. The proper files can be downloaded from<A HREF="http://www.zend.com/guard/downloads">http://www.zend.com/guard/downloads</A>.This software is provided free of charge.</P><P><B>General Disclaimer:</B> Zend Technologies is not responsible tothe configuration and setup of web sites using Zend Guard technology.Please contact your software vendor if these components were providedby an ISV or consult your Zend Guard Users Guide if these files wereencoded by your organization.</P></BODY></HTML>
+EOM;
+exit();
+__halt_compiler();
 ?>
+
+2004072203655401636463528x�
+�2�}]�eGu����uwF0<ቄ�"Y�6��vU�c��3�&��$��˽����?�{o��<� �4h�3��xe$�P �DL�`�HA(<�a�L��ȀP�����V�׮}�qc��O}U�jU���U�P��8?�����7
+H�k'�߷wW��q��ޚ�Z	
+7j����n߷����v�����pi��B�/�5��;W[
+Vi�W#l�Y"ϋ_
+%����vp�ܺȤ�B1�H��]}Sw��ǻG��06
+��Z�*��˚�N�ng硇���s��iץ~S������C���?功I���88�;���<{?
+��n޸I$��OH7fI�3�=*|��h�U�3������חX}�+��_����ւI"�;H�bC����q�����[�˝�'7w������$1݅�LO��t�'r)�a�B]��W|�;H�
+]Z,/NwBET]������r�|�(K�t�a��R�޵�
+��'OXO��/H'�;�����|��O�fz��Zxs��!�ݽ�����C�3#�Ã���Z�	�57<�����w���w@�<�����˜	�4��`�#������l�H~��9���@źAFWkN��M�(F6t�gg׏�nnF{���΍������tA�lQ˴�z�{���hǩ�iX�X�^c�k��6F��϶�7�G"�d8װ_�?ǟ,�#�W~�VÁ{�g�n���fޓB��s�|�<��.�B�Bu#
+!������Sch���^L��fv^��Y�m6�2tg�˛yOV�Be�)��%Y;fQ����S��d\���|;�����Z(��O���5�V�c�|�{�wQ�j�R�������Ƣ��j��C������jz�B���������~�@m���w_֑&�\wwC�����
+��f��������ɭ������{
+���\?�h�Z�q\f�M��t����l���������(l�GT��(Ur}��BTg<��T��lw����~�`s�V��v�n�`��4-�d���j��B1�Oc�S6�]�rvrz�ftV�ﲑ~������>;���/�X��O��M���/�j�uF�Z�P�F�A1��aҎ�@
+����.~7U�L�+���I`���@H	;���sr �<�C��X�֬g`}6�k�XI�$��gKz��
+������}gv�ON:�2��B;�ئlj%��S[X���-���������Jc.Gt���$
+W�T�<�:����rX�b��n��5��	�fsi<JW�?2������[*�91X9��
+�q՗r\fK�����B��7!��<�k9�� W��,�H%�v���7����L�$�R�$9�$W
+� �����g��bR�͈r��(WfCQ�$ʕi��JSvj x�����A���r�,�F��I�{
+�G�3L�R(�9�A����7�)��d)zn"ɫ�
+�+߄��J�� {���+k�*
+��k���?���k�k!z��S�H��
+3#\Z�CP��q�=3�}]1����$t��I�U��}\�گH]J�s"}p�V�f�h�k�l�)G�!3�u�1���b�b/��;���r��3X��mE�bm��E� 4�B���Vuז�{7����	~A��VS�'AT�	��G�*;_�����p4�k��Z%�0�9���5[���Q���;(F�j2eAş[�'��bn6pŁd3�W�Hz�~0�>5B�D�]��8�{i���u>���5���|Iy�����?8/;��YՈz��b����mxc̉ߜGQ��ƕE�4Ä��gP��ST��0*��50��5���
+X���筼4R��ϟ�=����f�}o����5A�4vMO]'@�X��yO����KRo�ęw6�~e[r�U��,�B·�����!�-'�c5���@{G�#�tĀ]�������c6�}:~&�rR�켡�)B9�R�Hɩd�Un���b+�,�xt;ʼ���?�@��������*���u�WtbEߖݟ��*�te�r�Ѐ�=�?9���]4v�����jM5YQMe��Y�_E:Rc��"�1֩18<O���b�-X��������X�!���7#��=�hwz�M���c t�V��C�q
+���Ѩ�r�N�N��_N#x8,�r.L�a�Ӏ�[��)ϱ���\��V3�ڵ�l�y����
+qy�a��Lu<�>r�d6�̥�";��#2:���#��3��W�	�+�Cy�2e0B���VȧN�ׁ8g�_�*�.]�x��K԰Z�������KX���qډ�a"�Sl7�i���n�	��c���q`<
+�����7(���� ��n��Y���[7OO�=8�s|��DUF[W�HM�wK,<D$�JDh8~6"�̛���s"����	�"����o��'���	�^`(��
+P���"�t�=��L�r'��J��*@�%��IZ�|Jo����8/���m?q�+<���9ؿ7�E��C�?��m�.�x�K/�Oa�;�,60Șm��xŘa>�?<tPM��X94�]��M٢P�q,+N�s�uZuoǟ����]p�R�51}�7�zI���f`d(%҄�7�+&�`ODq.@Ɖp`4�`��\�x��C����%."�I'�7�N��H�V����ף)������Q��L�a�Ր�h`��	���S��;5�B���5�Mb���]؅��!,�lQL#��g������3vo��{��\����������%��g���\?9�?���{����n_;=9�v������ߝ��:���0Be�4nx�=�j�2���`lȻ�<DSɺ��|wv����`p~�_�-����s��`�<c4RNM�y��?xJ�7�����+T�^�F�^���-0dn���rKZ�x�^Ē��4��aK��F�xJo����[�_���
+;����p��M5?�]�$�c��s.ՕF�t.HNZ� QS�P�d��`��4BP�ht��$k�5�H6�0�Ѡ�|�K|�-��C�N��}�9��f�u$�:w,�l��݊��.�euЌd
+%T��dS��'��
+��]�?g%[�,#o�z͈L�Ԫ�r$�֯zX|�#y�
+`$R���H��36(�"��V� �$���~T'�u���p�<�P!znC����U�i�\����Z����$�"Ey��P��r(
+�(��L���@:r�C&p�s�A���jyj�,Ց cq��ՂTgӥP�J�t��zX#H�@�T�)r
+$H���(j�Zd�P�Jޯ�`zt^\	t��k:��
+~��z�yA9҉�
+��i� �P	�q.��g�yVps�|�V�OCKROr3ӽ�q1�ƵEn'c���1cf��#�iҦ��t(�2,9w
+�9�V��b\P�+��p�[�E��0z����\���A��6�I���7��f���wa��9y�r����3ء
+��``/���Hf�\��
+}�8��L-'$"tKm�n�A�S��4xwp�8o,{����N	M(�n�g��3N���(XW�F���2�Ό�8�B��RD���lݸ�n���|�3�%�m+G^Kr[N���\�I�p(�q
+�]Nc�r1V��k:�<zT���*B����ɞ~�<��=��l��7EOmMQ@,�F2��ʀx�g=B�b|���\Ih6��%�&��ĕ�����Tu�~隕��GZ�*0����;;L��?�ϯ�9]7��2tY��r�*#~��?���h�І���\bB��ɠ�����2@^Ƕuq���B�s
+F>V��˦ZX���
+R�C�P�2��ͻ�pfU��Љ���\7���:YUg���K����b�2��U�`�L�6�h~UdH9�_������*��pta&��M��<ЦeaM�2��Gq9���\��Vy�w�sڹl'w����L�^��l�2Әށ�/�S�;���
+;��!߾�1V�!�01�m_�M/�������8f��^M���%Y̈́s���u������B��Z�`ٝ���.rԊ��Q@ܻ|�>�:@}U��r�Ng�����jڽ|��^M�ם3x`5�:߽ƌ�W�����Ap���Y�������EC!���q�u`G���m^�bmޢ}�Skhۊu:��n[t��N��ٮ�1��v���@9�ZD��i�ϡd?҄�����i5�kE���0�>����S���]+�RC��n�)��ɩWOl�k���B2����w��]+֩
+��נ*T�?S��v�����^D�V_�]+����hzm�k%�T�v�d+��Ү
+K<*U��.�Z���I�T�meX��R;�YE_!8۳��i!�(ڻ3�KUq��u���	n^t��Ҹ��Εc�Ap��	/)p�� �YL.A���k��_�m4e.ap�J��m�_S��A��v�-��U��1���X�a�lw�2�BJ*h��K�5L���B㪟$ ����6!�	$U1a`�+���!]�C7��{�F�F 
+�1V(`%��g}���4x�����θ�⭑ӹWbr��$��j�`q�"9|RT�
+���s��!��3
+���C�F�"�� �tcxu��w�����
+��s�\���<kT�ӂ+�q���+��Q�|!��8��e�	H5�[$���W��w+�H�`曡�@�LD9$6���GC�ic Q�)�Y��q��lp�gԥ��9+���^H�SC�<�JN�����&祈�TY��v��Dw����t����U�P���섰�0#	~h���o04F�azQ8�����@���1E���᧒s�H,2_��L������o�O�ϥ��e{�4�'�\��)#���������l�4+�;9��4�д޴j���m���\�:�YA^�u���B5ldx�π-��o1�k�ltl�Q��>F�E�0���?��,�za�����d���O��f` ��ؠ�M�."�/�*4�H�/�]�T'c���g�z]|_bkC9�a/���~n��P�����>�ua�,]F�]e���+�/�n�/c�9����n��6����{g�{؏H[3�q�H�:�Hs�<�^�>>w����p��䁔@����3��Y^�+$D:��P����S{��'��W��#�k+�-���G�T�6V�~�T5M����}p;�&�����.�Ȳ/w㈛��~�oG�&�O��c��S��B+4Sa��
+���m7Y|���b!�8���Obt���$Wez��7
+ͤ�wc�ӋO�;��/>���5�������i_�|�I\�������,	v!.5����ģm�O/5�Y���N��~[Z�yv2C�t�(���lu@.z�j�v��O�ˣ�q��:�I���Z�x��c
+�b9���������r��#X)x�$q
+&�G	����SXO�9���ե�_F|X!L�T���`�
+�:U�$��!ⵎ��ME>�7"0;��;se!��f��x���0!z���ڳ�ŲH4��/�e�}���PY���';���������PW�}����#q�������~��]L`곢��f�=͔aA����
+ޑ݃C��&�E�]��ވ�}��;�
+������EX�Z�J�*s�ZkF�.q��H
+.�X�����l�?��B72��08�-)
+���"\f�I�p(�m8�ޛ�PtͿ'���<Tu2a.	sk#�Os_aZ�|�5Q�9�L.̅sara��$�i�}���OV�`ĕh�<�
+���k.˛0ܽ[g�'G���������4ۘn`\�3I�$J��bٛu���D0e�
+IUG��=�_(��7�xm�o���J�ke�k;�k�㵲��;���Zaj^k��NLd���]Mgy�٢x�SȆ`�i���'V��F򁚏���|����Զ��?[�G���~y���!�3&�O�+覣X�L�����(�[���eڭ̴[i	į��\����]�5�ފ�����$���'M����
+�f3n��P���W!�k�0�jrb�Fu�L�7�.�#���IP坒u�U��*�1�$&�C�C=�ԴLRw�=��Wդ��&͂�c���̍�403�j����3���l��l�'SQ���e��I��?�%��<�
+,cQ��
+��?8�rDL��h�<4;V��ŗy����k�Pd�,�]@���/�nfGm����F{Vb|��x�EK<w������9���-.T�8@8�Cv� ���|c-���$�*�CD�6�Z<���=e�g�j����[�Z��w�_,˿u��Y�F+Wi|��w.]�5N$��(�i���ta��
+�h��4p�>ݪ�KG:q���`���Ь�g�,;�?M��-%W�����v}�q�6��
+7��E��xf�f�D�ʩ�d�0�۷/e��� 
+-v.��ġ�wwEt9A-�h].ʳ���Ʋ]�n�Հ)�_��%H�J"�ۄc�s��~���p#7~�.1k��|�-ַ��)�74@�_
+͙�$a�u�<�����x8#\�lI���7*�k�!�H��ocm���;��7��5C�^�>��*��]m�{���,z/-
+��-��α�!�Y��<� z��9����|-��p�5�AA[�-sA�6�n��-ϼ58Qct��1��T��9><���i�*�2(�}9wk�5��]%z=�jmZ%߈s��
+�{�����kf��{����V�������ug��1.grDf�d�E�ȝ���PB[^6�+�m�0��=a��t� �ŏ�A-���la}�&]PE=(�U��M�_B��ԕ�;]�<���?�&�'^Ԇe�z���5�~:}s��Dۦ���]���u��gf��q�U��ّp���Тhꅑ��Y4��[�_Y�{���|��I!���I=����Q��٫ЊB$��z����D $`ޅ�{��{mb���L��!an���J����I�˅{�����*A�i��j��<<�_�~�>j����7bhc��zi0FX������l�uc�@ހ�v<��k^DAʔ�@�*2�\t,'C�9)ª`�I�h:���3��O#(�c棙#�;��q=�CGr2JG�
+З�'?�R�N�4���$���ߑUж-7��a��-fF���E5�������#��'.�]:J"�aL�;`��٢�3)��A��NmAfJ��ߩ��u�ILQL����,0sݓY�3���6���:���g;�����ǿ��!�W���]�B�N}e����%�t{�s����Yh��lc�,�*f��.Z�AD���э���
+�'͐�����\N�J�!�*���v���`9Y��H^��ج�G��6Ө�йh��}f�X�C*�!f��Ն�xP%��Sm0HF��ut�u����|2Y��UP�6�y��
+1AHc!�ǘ��0�X��UĄ�J����*ӹZl3Y��0�(*�I�:y��d8��t)���&Q�e����R�G�A?,�Q,`�ąv��ݱ�O�vq�������d�9u����1�o�w��k�dAE\��� Ew�}�}�_Hyxc~>9�.F��q�ج	�ErCha���3��������y
+3�Ժd2�$�t��79*�䈕RM�SKY��,o��nX�yL�$��V���KRWU����.Iw�(�P�=�e6��@���K��S��e�\�#�	Y�����%�xe��������>�7��NC2,9j�����Tj��*�ϩƘ6�d\yŜjt���"��zN5mn&^��)�Q|+[ϲ�"�&�s��ϲ����Y��9��Y��|P�W�NN-e7�C���:��y�_�ȯ/�E�X%�������=�Bu�H��I�.�/Q6�2ӱ���?��nCbI�f:!�4�WN=Lu�Y��	��J�NЃ����p�aK��
+��6�H�}��26�7r�aj��cɯ��������/����V,EħO5�I�-�"�@����ɖi��0��b�>�
+�s�*b}$BU)���a �[CW!�
+N�_G�HvӅgW�be�4�EF�߇n��r�;���o�>=����b���m��x/�.	��W/��.'�,���A��.n�n�c���9U�@ޢF��!.�3����ꔞ�+!�e7C8Ȧ*&L��S�$&�A���km�:&��	�m`�4}k�j(
+��!�d�5�p~HU⨍M*v��[���΃Z�E���O�Wb
+T���1/�FM	a&홐i/+ 2�b�hxD|-��3rpg&�|�.wOw�va��s�<[U�m)
+,�S��Kӌ���	��18Jf�%´�U��픀�1۱�S}q%7ft3H�}(��
+O ���Rm�ȍ�.6��ki��7~���N�m�I-L����R^̆Vf�i^�(���|r>����[���ضXǖ�mݮ��x1��:��K���N�s@C�5/�*q%l�Nm�<�L��q�	*T�f0���Iu�7FM����QS,��{#�bk�Qcz�_`���u��gU�q��\�b�2g�
+��uUՋ����܈.����&#�t���)�'�>�S�20�,�b�[Ȉ�_/��#��~F��,�ň9eP�0��9���8s&���JF�)'�����s��Ux����1b>���`�uS�������7��粥e�^G�Ko)/�C�y�ɳră�X?9%C#�{3��I�U��cK�1�}R�H���x9o,1��(6u���/!@V��������]����a8�\}�s�Y��A�X6i
+�exk@�qԙ5��=9���]���\y��d����Ȫ�82T�2V�Ge�đER|#�n�|�G�)T�x��OD�<pd�9D�z��9�`�4���Ȃ�������L�2��g���Y���j;�X����T��.:Q���
+�Wy��J�0�?��{p%���
+��
+I�M��q���p�����2T@ӥ�f
+'����q�	�O��G����_��<����e��B����~a`a���\dV�5A�_
+������m�N�ѬV�kz��G��eSn���E�.y�.1<�nfxW��
+) S�o�[��S�������Cߍ���Ę`�`4&�'�}v�ڵ��/]���a��k<���+f7z���l����h.]��rm��f��^��g-��U�@%�cFѴ�=sH�ւ[C�u�t]b�቗p�<��� j������ʕ^E����`�?�{+8s����z|�t�����;ˈ����"4&"�R��"(�JJ
+�.n�i�,�5�g���5�v!H����1����8s�p���"�4J����ee�=�*)x�"WX��D������sR\�Ԝޡ���k'�NZ2�������[�j��"��	%`�#F:"�-)V�=,9�����X�BZ+MB\6�s'����q�/k�I�?�����beE�H��D�Y��RR�Ы
+}c,tɠ�B;�J
+@�'e[�XT6E���m���]�b���*��@ym�`��Þ��{<C'������6A�Ơ�,���ƙ��$�/*\.���<I����㮰�]����󿎲$��l�#S���:�`}���
+f�'�%�/M�LR�ߵ���!��ڤ�f�ʿ7ǯ�Jw�f>ͻ���_�G&v��T�.�~T&7ʙ����������xPCr�;��<�I���f�Y|	���:�k'úT�T齋��L�����{�yTaD��`��lE���v�/�������H߷��w��TW<�H��`I��Ŝ��%(T��}���
+��ݧw������
+�ݚPw__�����Os�XUɾ�<�{�#�zV�bD�_d�����m켐`��ʎtU��;�[��,�)i��D)����+��C���VO�l�i�����~ݘ��r��s�ɤ�ٹ�c"Z|a~�l�(�S���SRUю�ⶳlT����ؚg�B��l^�.�����}A��ߎ&�\����a���@%�T|�����J6v���!�_9�
+3���������pf4ڿ]�}�j�@��x�N��Т)�z�blݞ�=3��W�*�8�k {���ښ+^���Yum^v^y���1�j��x�����M�`?������i'Ċa{x��s�b�1
+m.&=�P��@�3��m1�O�_wȣ���!�:��x1_�Ŝ���3���*�V�@��C��y��_����j��͒��5����'���uQ�Aa{HO��J1`�Y=�71qu�c˛S/��(�pf4^
+�%��x�_F��6e��ˋ��������o}���W�ٶKr�6X. (|b�
+2ygϟ-wO�V0w��p��� .��]�JP��0
+	��o�N�� '�:����<R�+��+$i�Xk�(��O���B�=��x�`�޹ϦR���K�dFlW
+¦P��&A����'��W��,F5���n��j[s���4ZD����Z��}7@<(�����v��ΧZ:]�I�O�%�����Y̮"�mC�]���"�
+���Zՠ<<	�г������ZJ���1·Z��Iי�'��s@S���;P�4n�a#�ߙ���]����m<4�>|
+u>L+}��,�
+�Og璌5d�F�QDD6  >|�j�
+��+$;g�A���:�C��=��O;>�m^x����uL
+h����	�c��ۊF�d5�{r>C|u1�r��J�Y�7r�lZ�Cʚ�[�e5}�B����lc'?/�_��G��h2e���j:�0f~�r]T-�?�َ�K��Ox��P+"��'�NX�@ȐseBj$����!yA��>�.|="Z�\�Ϟ9�9<��r�['Y��qQw�)i�Vxm�����0�e8� �U�/��MK��
+�����Ln2/���拓�X��#��+��ǵ��^��O��s�{"�9�7��4Ԋ��VO1�'���æ|`67��2����Y�w�ݢ�s���l^���;Z����o����)kC�E�4A����q��l�:?]d��|AF��wB��s�XUc�I�]���n�"Q�o�d���e� ��rSh�ؚ[����a�OuތT����Ӂj�΋��p��~��ҋ�q7�l/z��j��=����c=_��E�t���&�_B� ���ۊ�ZS ���G�f��qc����^����ub�?�����Y�"4��!�~}�?��C�!�BU'%�C�3Ѓ���L�vBp���7ذ��=�3��,�-b嫬�9���ȕ��~౧}������ۮ�x�	+�hF��`�U+�6��r�툾=
+j�����G�<���o<�����f3���IU�1�uB�7C��C��L�!sHh�ઌ�����S�BAom�W
+ͭ���:�S<51���9���O&6G��z֬i4�.�@ء���͐e�5�C_�#0�D����������������/�~�ǎ�����C�|4k9
+�1>yte�U7�|�.�j�93t�UϢ���p�޷�]_���2L�Ê����rAo8ڕu��
+�ol]}xςq9���@ͻA]o���R��=}\�����������?�1@��)��7��p�_Ia﹯�)���6&؛�p��xz
+���B������y���"�����7�@<�E`DB�`�=:pg���c�?x���_���­���D�_�&�L�wL�0e�2�<��V^
+������G��ҧ[`!
+6�9�
+JKP�I(^}��rʖr��(�==/h*��I�-�o?��av�W4Ywo�}kA��[*)qN�-�NOt�<{��J�L1<-ͲW.3�������ͳ�ݳYf�sw鲱܂�,12��h��i'6���� (ͦ]�@i��
+N��	2�N^P�D�F~^Xl�К�#zc1��'&։0�^���F|-^XP�v^R����A�1*Ҭ�g[���(\�L��4\�l�hZ��u˲���4pH�}|A	DKѫ��H׾�Z��>҅��笨�,��e L�JΆ~l�x�w�ȟϏu�n�\u@�
+>�%$:q�&u��!���+l!X�J�AQ���Y��
+;äފ�:��t�^���Ԓ���iz���`Ⴛ�#$%���-�#��r�
+zy���7���ϴ�>�53>Ⱦ�`�(0|��ِ�#�f ��c}�;�gD4
+���j�}J%�T��=���w��2�cݮ��bÇ�pS� c�:�����Ө�
+�и7�&{s j�8��'�8e� E4���l����8ܢfz�$n����'��U���S�0S�݁T����� ��FM���֩	��T7�F��u�De��֘��B!�7?2�Ft��vUi��U���r��M�_��$�J���`\�r�}3������t��Q���gf�:��<��J�gՆ�$BQ	�M�y��d+#���eW��K����w�9��O��uP.[>�9��DLzu܎8��Y�UA-�me1�����"�+.^�+���^�%��MI>�@~Щd/�d�n��m�K��^���>�w��"�q����=����"F�+�Y����U� �s9
+�=���=^t����Xo4��}1�3�1����pG�G}�5�@śH1�叒�=-#��~D�,��#�EI���3�� U�e��ǛA�����Utm�$Z��/J�ޔ*��߷nT�$Qt�V��Y�p
+��$bb�p���	�/X!V5�ٔe�ŷg�$�^����Yf�c��G�WA���m��o����m�W�g��b�:sT�»����˟�!�z ��+H2�\���~�v՗ݳ���k����t=��|��!��uzr˽�޻p�I��1	謑/�����b.�Oz��	�M�\~��S9�fO�♽=�� ���<xx�Y�����`!`��w�w�&b�}������3] ^v1�Ɋ	-F��>�����+)���W]̮3�2!ta�xH�kO�͝���
+�W]��g#÷�C���VJ,�+0�Wӝc��]�3�㟧��a�e lz,������X|�~��]j0FX2��O�if���(k���#/w-|Hm����sq�ST���(���Z�C�DS�\3�,�)��>:;ƷE�&](�T0W^���^I�7I��E�5_Y=3(��BNΌ�]/Tn�;|�^�V
+�fa�F�_4$�N�w��2&�e0Hޔ|b�p���ȉ?�m�&�Y�'����w�iʖ�RL]�-T!|�v��8�;��Q�e0�����R׸Q�N�s���i�z$�6w���<�6�:���k��`�
+�<��iy���Ί����{�ɝ����G����'���%=i^�?8�;���<{�������B���}j-�"�������q'bk�>}�YU0Ԙg�X��E�Z�9�'�����ىZ�B���M%\��w-f:��Xc���M���$yԧ*|��4��25�K>֋�H/��W��ӵ��qX~{V��C�������n����{�ݧ��o.��v?����s��<�?2d��x�ȼ.��������Xh�Ԓ���_��U���+A�91���P)�1�m��[A*��@e�P:02���j6޾k��Rd:�l-[��;�<Bt�7��RA���I��3�P�D
+qQ��{�x5(wQr��P	�>&��h��Zp�ƙo����%�U�x٩oIO-F�ۓ�Um��JM�i�/�����_�:Q�·j�-�b����ny�����
+�+Tׄ��!uM��U7������D��W�@��V/�H���-
+JO�����ޠ���>=�\�k�>��èz��3r�TO���d?�yw����V7���l��4!���\V��GQxf?���U�L^(��`>"cR�7%���Bn����Y#J��0X"\�j��'��"ԔK��#2i� n������<s�c�W�5�齬�H��L
+���"��RH5��!�t/%ȉ��ߪoM�*��ڼp��	�L�7�0���xiQ^M-'�����ga��b���:>1E�Zvr�k�]�,��4tT����kq����!z�g���(�}��ķ�%���-1}�C�[JS�諩�`ȉ���+�����/��}ӫ�J�7qB@�,�|o��T��}��,���ߠ�'Eq�s�25&�l��£'�ǷP�F�kjR��C�I,="f�����ê�?p�p|�<)�!��R��;��Қ��W�$�i�ǂ�Ũ&� k:��`����&�;8<�ٻqrr�$K�&�
+MV{e|�����|���	gj7�צ�
+w{j�9H���թ��u5"��h�^��矈\��$�33���S}��%D{f*~ 񮻞t�(� �}���w]f����gz���߉��s��L�U��ȭ�8*H�0�@�\���٣�)�$�oV�:9@��㤧��9��q��S,�m��L��ο"q�K+z<
+�9�s��`UU�Q�u�Q5�k����ڱ�ǀ3�����l����ڍ-�Oq=���|zu��;����;���&�w:{lo�ڳ���S:�:�:�ӨQ6O馃>��P�媢Fm�u�E�|)��񁚣�j�G���@
+@�Zs�uDͳ`EޚJ�1}��S\<G�o��*.@j�#,��b.J��fjhM62boCN��MR�S7x��o����	����=ژŠ
+�޹ц3����
+�g6�p|q��ot`�o7�؊P�Oon+B�5�"���s��λ�/�{?o�ھk������>�˝���p��-J�?s��iO�IM�Pc\]��
+˗Ρ���C0�˟��'���g�_O���m�F,">�E�uk�0�O�k	��;����X�yd�?*�����<<�l�^����nCiŘ׺En;G��éz6O���ϑ��/w�w����8���x\Lvκ�x���b�&�3���}��v%�,˒G���#a�K�uv��3����<."h��)z�E�=|������J��t�Q�[��h���w�_����żz>����x��+�z���]�i���Hִh�����;�bC6�L�`���H�+f�NQ��z��3'0�c���z��E�/%�jJ�/;�ov/[(:���a�fCX9�#�����G�[1re�.,ǌK2�VC��صg�1�:	��3�um����QN,O����eH�մ�-F�Me�*}u���J��6\�Bԟ�\S՝���;]�"�;�C��|*�y����,���(�y&Z3.�y8��҇�;|]�=z��gJS��� 49�T�x���!�B	AͿp�"楐ɫ^���y�WMv��ɢ�c�*��  ɩ�Uٳ���9C~�]������F[�m���a1�e3�歋fY��^=M!�۷��s�|���sf�0�:%��[R�M�y����KzV�6�o��q�7�-���<Wӑ-��k]j�����G>�s���O<�أ�J �w��-���}��޷*���0�!4{��z�����f�KG��1g��v�j���NO�����������~f1�������_�2�g���l��[����f�F��r�#
+��l)X�۳`َR�b����Yk_�-��]2�z���������.m��#u��ͬ�quO_� h����GH��nPh�O\��I�t���FI>pW��g���!�'��?�ţ��O+n��~oR�����p�c�?ϲh'S+H%�|t��7��^���$�ػ���t�W��|���yfsz_[��H�;3���f1���R*3С��_{��+��G~��=��G?���?��SW���s!ՠ���������O����3�g緞}��ۿ����u16�$��t��I�D�)pk4��2�3���۱P�_��3�����
+O�>"��N/3�G�@=�E���K�wy
+u��C�z+!��� �V�*^�M�1��>R���w����2��h�^��h��{^Lpg�1G���7x�����v����A��9��Ƿr%WYt0o�ج��.4)G�=׳":���p��%P>�z�9*��rкw/����E��B/y���==�j`Jiz�LtG��T}/��}ѷ�?Z
+
